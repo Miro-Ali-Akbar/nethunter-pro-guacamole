@@ -7,7 +7,7 @@ on a mainline Linux kernel instead of Android) for the **OnePlus 7 Pro**
 Built on the [sm8150-mainline](https://gitlab.com/sm8150-mainline/linux) kernel
 used by postmarketOS, and the official
 [kali-nethunter-pro build scripts](https://gitlab.com/kalilinux/nethunter/build-scripts/kali-nethunter-pro).
-Developed and tested on a GM1911 (India).
+Developed and tested on a GM1911 (India). Also boots on a GM1913 (EU, 8 GB, Samsung KLUEG8UHDB UFS); see [GM1913 notes](#gm1913-notes).
 
 > [!WARNING]
 > This is a community port and experimental. It **replaces Android** on your
@@ -201,6 +201,8 @@ hour (most of it is installing packages under arm64 emulation).
 | `0007` | msm: don't drop a reference on the *exporter's* GEM object when freeing an imported dma-buf. phoc renders on the GPU into buffers imported from simpledrm; the bad reference drop underflowed simpledrm's refcount and crashed the phone |
 | `0008` | guacamole: reserve all the memory the Android 12 firmware owns (full 85 MiB TrustZone region, XBL/AOP, secure CDSP, rmtfs guard pages), taken from the downstream device tree. Linux handing out those pages is an XPU violation: the phone reset into Qualcomm crash-dump mode with no kernel log once memory filled up — within seconds during `apt install`, at random otherwise |
 | `0009` | guacamole: enable WCN3990 Bluetooth on UART13 (GPIO 43-46) with the downstream supplies, select the revision 21 firmware extracted by droid-juicer, and give the UART the `serial1` alias the serial driver needs to probe. After the [OnePlus 7T Pro port](https://github.com/Sr-0w/hotdog-linux-bringup), which has the same wiring |
+| `0010` | ufs-qcom: on SM8150 never negotiate above HS-G3. The controller reports HW version 4.x and defaults to HS-G4, but on the GM1913 the lanes fail to train at HS-G4: `UIC Lane error` right after the power mode change, then the UFS error handler resets the link every ~0.4 s, the root filesystem disappears and the initramfs drops to a shell |
+| `0011` | fts_touch: silence `-Wstrict-prototypes` for the downstream FTS driver so the kernel builds with the clang in current Kali rolling (clang 21), which turns the warning into an error |
 
 `kernel/nethunter.config` switches the display to simpledrm, builds a plain
 `Image.gz` for the Android bootloader, and enables common USB Wi-Fi/serial
@@ -238,6 +240,22 @@ replaces it (and brings the bug back) until the fix is upstream.
   guacamole, loaded through `G_RESOURCE_OVERLAYS` so the status bar icons
   aren't cut off by the screen corners.
 * Fixes to the build scripts (`wip` variant, rootfs partition extraction).
+
+## GM1913 notes
+
+Tested on a GM1913 (EU, 8 GB RAM, UFS `SAMSUNG KLUEG8UHDB-C2D1` rev 0400) with this repository's v0.2 userspace and a kernel built with patches `0010` and `0011`.
+
+What works: boot to systemd, UFS stable (all six LUNs, full-size root filesystem), USB networking and SSH at `10.66.0.1`. Wi-Fi, charging behaviour and long-term stability were not yet checked on this unit.
+
+**Without patch `0010` the GM1913 does not boot.** The kernel log shows the UFS link going to HS-G4, two lanes (`gear=[4,4], lane[2,2], FAST MODE`), then `UIC Lane error reported`, `ufshcd_err_handler started ... saved_uic_err = 0x4/0x44`, and a reset loop (hundreds of `host_reset`s). The initramfs then stops with its rescue shell, and the `Synchronize Cache(10) failed` lines you see are the driver removing the storage units after a reset. Forcing HS-G3 (`ufs_qcom` host gear 3) gives `gear=[3,3], lane[2,2]` and a clean boot. The release v0.2 images contain the kernel without this patch, so on a GM1913 you need to rebuild the kernel (`kernel/build-kernel.sh`) or splice a patched kernel into the boot image.
+
+Android 12 firmware prerequisite on a GM1913:
+
+* On stock OxygenOS 12 `fastboot oem unlock` fails with `Device cannot be unlocked for technical reason`. This is a OnePlus bug. Roll back to OxygenOS 11 with the official downgrade package, unlock the bootloader there, then update to the final Android 12 again. The unlock survives the update.
+* The LineageOS install guide for guacamole requires the stock Android 12 firmware to be installed first. LineageOS itself does not ship the firmware. The final Android 12 firmware is identical in both slots except for the signature of `abl`.
+* Lineage Recovery has no ADB authorisation prompt. Use **Advanced > Enable ADB** in the recovery to get a root shell, for example to back up `persist`, `modemst1`, `modemst2`, `fsg` and `fsc`.
+
+Debugging tip: the kernel's early log is lost when the UFS error loop floods the log buffer. Boot with `log_buf_len=16M` on the kernel command line (a 511-character limit applies to the boot image header), and add a USB serial gadget (configfs ACM function) in the initramfs to stream `/proc/kmsg` to the host. A kernel built with `#define DEBUG` in `drivers/ufs/core/ufshcd.c`, `drivers/ufs/host/ufs-qcom.c` and `drivers/phy/qualcomm/phy-qcom-qmp-ufs.c` shows the exact UFS bring-up sequence.
 
 ## Known issues / TODO
 

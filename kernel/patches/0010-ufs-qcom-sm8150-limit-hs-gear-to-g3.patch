@@ -1,0 +1,19 @@
+--- a/drivers/ufs/host/ufs-qcom.c
++++ b/drivers/ufs/host/ufs-qcom.c
+@@ -1105,6 +1105,16 @@
+ 
+ 	/* This driver only supports symmetic gear setting i.e., hs_tx_gear == hs_rx_gear */
+ 	host_params->hs_tx_gear = host_params->hs_rx_gear = ufs_qcom_get_hs_gear(hba);
++
++	/*
++	 * SM8150 reports UFS HW version 4.x and so defaults to HS-G4, but the
++	 * lanes fail to train at HS-G4 on OnePlus 7 Pro (Samsung UFS 3.0): the
++	 * link raises UIC lane errors right after the power mode change and
++	 * the error handler resets it forever. HS-G3 is stable.
++	 */
++	if (of_device_is_compatible(hba->dev->of_node, "qcom,sm8150-ufshc") &&
++	    host_params->hs_tx_gear > UFS_HS_G3)
++		host_params->hs_tx_gear = host_params->hs_rx_gear = UFS_HS_G3;
+ }
+ 
+ static void ufs_qcom_set_host_caps(struct ufs_hba *hba)
